@@ -12,15 +12,16 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 import math
 
-# Third-party imports (install: pip install openai psycopg2-binary pgvector)
+# Third-party imports (install: pip install openai anthropic psycopg2-binary pgvector)
 try:
     import openai
+    import anthropic
     import psycopg2
     from psycopg2.extras import RealDictCursor, Json
     from pgvector.psycopg2 import register_vector
 except ImportError as e:
     print(f"Missing dependency: {e}", file=sys.stderr)
-    print("Install with: pip install openai psycopg2-binary pgvector", file=sys.stderr)
+    print("Install with: pip install openai anthropic psycopg2-binary pgvector", file=sys.stderr)
     sys.exit(1)
 
 
@@ -255,7 +256,7 @@ def retrieve_memories(
 
 
 def extract_topics(text: str, max_topics: int = 5) -> List[str]:
-    """Extract keywords/topics from text using OpenAI."""
+    """Extract keywords/topics from text using gpt-4o-mini."""
     client = openai.OpenAI()
     
     response = client.chat.completions.create(
@@ -274,7 +275,7 @@ def extract_topics(text: str, max_topics: int = 5) -> List[str]:
 
 
 def score_importance(text: str, context: str = "") -> float:
-    """Auto-score importance (0-1) based on content significance."""
+    """Auto-score importance (0-1) based on content significance using gpt-4o-mini."""
     client = openai.OpenAI()
     
     prompt = f"""Rate the importance of this memory on a scale of 0.0 to 1.0, where:
@@ -304,7 +305,7 @@ Return ONLY a number between 0.0 and 1.0."""
 
 
 def summarize_memories(memories: List[Dict[str, Any]]) -> str:
-    """Compress multiple similar memories into one gist."""
+    """Compress multiple similar memories into one gist using gpt-4o-mini."""
     if not memories:
         return ""
     
