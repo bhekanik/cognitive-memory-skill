@@ -143,6 +143,52 @@ Increments access count, updates last_accessed, increases stability.
 3. Compresses clusters of 5+ similar fading memories
 4. Suggests high-stability memories for MEMORY.md promotion
 
+### Auto-Extract Topics from Text
+
+```bash
+./scripts/memory-extract-topics.sh "BK bought a house in Bedford, moving July 2026" 5
+```
+
+Returns:
+```json
+{
+  "topics": ["house purchase", "Bedford", "relocation", "real estate", "life event"],
+  "count": 5
+}
+```
+
+Use `--auto-topics` flag when storing to extract topics automatically.
+
+### Auto-Score Importance
+
+```bash
+./scripts/memory-score-importance.sh "Had coffee with a colleague" "work event"
+```
+
+Returns:
+```json
+{
+  "importance": 0.4,
+  "text_preview": "Had coffee with a colleague"
+}
+```
+
+Scoring guide:
+- **0.0-0.3**: Trivial/routine (weather, small talk)
+- **0.4-0.6**: Moderate (preferences, daily events)
+- **0.7-0.9**: Important (decisions, relationships, learnings)
+- **1.0**: Critical (life events, core beliefs, major insights)
+
+Use `--auto-score` flag when storing to score importance automatically.
+
+### Summarize Multiple Memories
+
+```bash
+./scripts/memory-summarize.sh shallan abc123 def456 ghi789
+```
+
+Compresses 3+ related memories into one coherent gist. Used automatically during consolidation when 5+ similar fading memories cluster together.
+
 ## Decay Formula
 
 ```

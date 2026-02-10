@@ -61,18 +61,35 @@ def store_memory(
     agent_id: str,
     content: str,
     memory_type: str = "episodic",
-    importance: float = 0.5,
+    importance: float = None,
     topics: List[str] = None,
     event_date: str = None,
     expires_at: str = None,
     source_channel: str = None,
     source_session: str = None,
     skip_dedup: bool = False,
-    dedup_threshold: float = 0.92
+    dedup_threshold: float = 0.92,
+    auto_score_importance: bool = False,
+    auto_extract_topics: bool = False
 ) -> Dict[str, Any]:
-    """Store a new memory with embedding."""
+    """Store a new memory with embedding.
     
-    topics = topics or []
+    Args:
+        auto_score_importance: Use LLM to auto-score importance (0-1)
+        auto_extract_topics: Use LLM to auto-extract topics from content
+    """
+    
+    # Auto-score importance if requested
+    if auto_score_importance and importance is None:
+        importance = score_importance(content)
+    elif importance is None:
+        importance = 0.5
+    
+    # Auto-extract topics if requested
+    if auto_extract_topics and not topics:
+        topics = extract_topics(content)
+    elif not topics:
+        topics = []
     
     # Generate embedding
     embedding = get_embedding(content)
@@ -237,6 +254,84 @@ def retrieve_memories(
         conn.close()
 
 
+def extract_topics(text: str, max_topics: int = 5) -> List[str]:
+    """Extract keywords/topics from text using OpenAI."""
+    client = openai.OpenAI()
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "Extract 3-5 key topics/keywords from this text. Return ONLY a comma-separated list, no explanation."},
+            {"role": "user", "content": text}
+        ],
+        temperature=0.3,
+        max_tokens=50
+    )
+    
+    topics_text = response.choices[0].message.content.strip()
+    topics = [t.strip() for t in topics_text.split(',') if t.strip()]
+    return topics[:max_topics]
+
+
+def score_importance(text: str, context: str = "") -> float:
+    """Auto-score importance (0-1) based on content significance."""
+    client = openai.OpenAI()
+    
+    prompt = f"""Rate the importance of this memory on a scale of 0.0 to 1.0, where:
+- 0.0-0.3: Trivial/routine (weather, small talk)
+- 0.4-0.6: Moderate (preferences, daily events)
+- 0.7-0.9: Important (decisions, relationships, learnings)
+- 1.0: Critical (life events, core beliefs, major insights)
+
+{f'Context: {context}' if context else ''}
+
+Memory: {text}
+
+Return ONLY a number between 0.0 and 1.0."""
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        max_tokens=10
+    )
+    
+    try:
+        score = float(response.choices[0].message.content.strip())
+        return max(0.0, min(1.0, score))
+    except:
+        return 0.5  # Default to moderate if parsing fails
+
+
+def summarize_memories(memories: List[Dict[str, Any]]) -> str:
+    """Compress multiple similar memories into one gist."""
+    if not memories:
+        return ""
+    
+    if len(memories) == 1:
+        return memories[0]['content']
+    
+    client = openai.OpenAI()
+    
+    # Build combined text
+    memory_texts = "\n\n".join([
+        f"- {m['content']} (created: {m.get('created_at', 'unknown')})"
+        for m in memories
+    ])
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are compressing multiple related memories into one coherent summary. Preserve key facts and context. Be concise but complete."},
+            {"role": "user", "content": f"Summarize these {len(memories)} related memories:\n\n{memory_texts}"}
+        ],
+        temperature=0.4,
+        max_tokens=300
+    )
+    
+    return response.choices[0].message.content.strip()
+
+
 def consolidate_memories(agent_id: str, compression_threshold: int = 5) -> Dict[str, Any]:
     """Run memory consolidation: decay check, compression, link strengthening."""
     
@@ -254,7 +349,8 @@ def consolidate_memories(agent_id: str, compression_threshold: int = 5) -> Dict[
         # 1. Find memories that have decayed significantly (retention < 0.2)
         cur.execute("""
             SELECT id, content, memory_type, topics,
-                   calculate_retention(stability, importance, last_accessed) as retention
+                   calculate_retention(stability, importance, last_accessed) as retention,
+                   created_at
             FROM memories
             WHERE agent_id = %s
               AND is_deleted = FALSE
@@ -265,7 +361,48 @@ def consolidate_memories(agent_id: str, compression_threshold: int = 5) -> Dict[
         fading = cur.fetchall()
         results["decayed"] = [{"id": str(m['id']), "content": m['content'][:100], "retention": m['retention']} for m in fading]
         
-        # 2. Find high-stability memories for potential promotion to MEMORY.md
+        # 2. Group fading memories by topic similarity for compression
+        if len(fading) >= compression_threshold:
+            # Get embeddings for fading memories and cluster them
+            topic_groups = {}  # topic -> [memory_ids]
+            
+            for mem in fading:
+                for topic in (mem.get('topics') or []):
+                    if topic not in topic_groups:
+                        topic_groups[topic] = []
+                    topic_groups[topic].append(mem)
+            
+            # Compress groups with 3+ similar memories
+            for topic, group_mems in topic_groups.items():
+                if len(group_mems) >= 3:
+                    summary_text = summarize_memories(group_mems)
+                    
+                    # Store compressed memory
+                    compressed = store_memory(
+                        agent_id=agent_id,
+                        content=summary_text,
+                        memory_type="semantic",
+                        importance=0.7,
+                        topics=[topic],
+                        skip_dedup=True
+                    )
+                    
+                    # Mark originals as summarized
+                    ids_to_mark = [m['id'] for m in group_mems]
+                    cur.execute("""
+                        UPDATE memories
+                        SET is_summary = TRUE
+                        WHERE id = ANY(%s::uuid[])
+                    """, (ids_to_mark,))
+                    
+                    results["compressed"].append({
+                        "topic": topic,
+                        "count": len(group_mems),
+                        "summary_id": compressed.get('id'),
+                        "original_ids": [str(i) for i in ids_to_mark]
+                    })
+        
+        # 3. Find high-stability memories for potential promotion to MEMORY.md
         cur.execute("""
             SELECT id, content, memory_type, topics, stability, access_count
             FROM memories
@@ -282,7 +419,7 @@ def consolidate_memories(agent_id: str, compression_threshold: int = 5) -> Dict[
             for m in promotion_candidates
         ]
         
-        # 3. Soft delete memories that have been dormant too long (retention < 0.05 for 30+ days)
+        # 4. Soft delete memories that have been dormant too long (retention < 0.05 for 30+ days)
         cur.execute("""
             UPDATE memories
             SET is_deleted = TRUE
@@ -326,13 +463,15 @@ def main():
     store_parser.add_argument("--agent", required=True, help="Agent ID")
     store_parser.add_argument("--content", required=True, help="Memory content")
     store_parser.add_argument("--type", default="episodic", choices=["episodic", "semantic", "procedural"])
-    store_parser.add_argument("--importance", type=float, default=0.5)
-    store_parser.add_argument("--topics", nargs="*", default=[])
+    store_parser.add_argument("--importance", type=float, help="Importance (0-1), auto-scored if not provided")
+    store_parser.add_argument("--topics", nargs="*", default=[], help="Topics, auto-extracted if not provided")
     store_parser.add_argument("--event-date", help="When the event happened (YYYY-MM-DD)")
     store_parser.add_argument("--expires", help="When memory expires (YYYY-MM-DD)")
     store_parser.add_argument("--channel", help="Source channel")
     store_parser.add_argument("--session", help="Source session")
     store_parser.add_argument("--skip-dedup", action="store_true")
+    store_parser.add_argument("--auto-score", action="store_true", help="Auto-score importance using LLM")
+    store_parser.add_argument("--auto-topics", action="store_true", help="Auto-extract topics using LLM")
     
     # Retrieve command
     retrieve_parser = subparsers.add_parser("retrieve", help="Retrieve memories")
@@ -354,6 +493,21 @@ def main():
     link_parser.add_argument("--target", required=True, help="Target memory ID")
     link_parser.add_argument("--strength", type=float, default=0.5)
     
+    # Extract topics command
+    topics_parser = subparsers.add_parser("extract-topics", help="Extract topics from text")
+    topics_parser.add_argument("--text", required=True, help="Text to extract topics from")
+    topics_parser.add_argument("--max", type=int, default=5, help="Max topics to extract")
+    
+    # Score importance command
+    score_parser = subparsers.add_parser("score-importance", help="Score importance of text")
+    score_parser.add_argument("--text", required=True, help="Text to score")
+    score_parser.add_argument("--context", help="Additional context")
+    
+    # Summarize command
+    summarize_parser = subparsers.add_parser("summarize", help="Summarize multiple memories")
+    summarize_parser.add_argument("--agent", required=True, help="Agent ID")
+    summarize_parser.add_argument("--ids", nargs="+", required=True, help="Memory IDs to summarize")
+    
     args = parser.parse_args()
     
     if args.command == "store":
@@ -362,12 +516,14 @@ def main():
             content=args.content,
             memory_type=args.type,
             importance=args.importance,
-            topics=args.topics,
+            topics=args.topics if args.topics else None,
             event_date=args.event_date,
             expires_at=args.expires,
             source_channel=args.channel,
             source_session=args.session,
-            skip_dedup=args.skip_dedup
+            skip_dedup=args.skip_dedup,
+            auto_score_importance=args.auto_score,
+            auto_extract_topics=args.auto_topics
         )
     elif args.command == "retrieve":
         result = retrieve_memories(
@@ -389,6 +545,36 @@ def main():
             target_id=args.target,
             strength=args.strength
         )
+    elif args.command == "extract-topics":
+        topics = extract_topics(args.text, max_topics=args.max)
+        result = {"topics": topics, "count": len(topics)}
+    elif args.command == "score-importance":
+        score = score_importance(args.text, context=args.context or "")
+        result = {"importance": score, "text_preview": args.text[:100]}
+    elif args.command == "summarize":
+        # Fetch memories by IDs
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            cur.execute("""
+                SELECT id, content, created_at, topics
+                FROM memories
+                WHERE agent_id = %s AND id = ANY(%s::uuid[])
+            """, (args.agent, args.ids))
+            memories = cur.fetchall()
+            
+            if not memories:
+                result = {"error": "No memories found with given IDs"}
+            else:
+                summary = summarize_memories([dict(m) for m in memories])
+                result = {
+                    "summary": summary,
+                    "source_count": len(memories),
+                    "source_ids": args.ids
+                }
+        finally:
+            cur.close()
+            conn.close()
     else:
         parser.print_help()
         sys.exit(1)
