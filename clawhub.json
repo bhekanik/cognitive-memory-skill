@@ -1,0 +1,31 @@
+{
+  "name": "cognitive-memory",
+  "version": "0.1.0",
+  "description": "Human-modeled memory system for AI agents — with decay, reinforcement, and associative linking based on cognitive science principles",
+  "author": "Wit & BK",
+  "license": "MIT",
+  "repository": "https://github.com/bhekanik/cognitive-memory-skill",
+  "keywords": [
+    "memory",
+    "cognitive",
+    "ai-agent",
+    "vector-db",
+    "pgvector",
+    "decay",
+    "spaced-repetition",
+    "associative-memory"
+  ],
+  "requirements": {
+    "postgres": "14+",
+    "pgvector": true,
+    "python": "3.10+",
+    "openai": true
+  },
+  "files": [
+    "SKILL.md",
+    "schema.sql",
+    "clawhub.json",
+    "scripts/",
+    "examples/"
+  ]
+}
