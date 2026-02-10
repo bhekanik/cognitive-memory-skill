@@ -256,17 +256,16 @@ def retrieve_memories(
 
 
 def extract_topics(text: str, max_topics: int = 5) -> List[str]:
-    """Extract keywords/topics from text using gpt-4o-mini."""
+    """Extract keywords/topics from text using gpt-5-mini."""
     client = openai.OpenAI()
     
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5-mini",
         messages=[
             {"role": "system", "content": "Extract 3-5 key topics/keywords from this text. Return ONLY a comma-separated list, no explanation."},
             {"role": "user", "content": text}
         ],
-        temperature=0.3,
-        max_tokens=50
+        max_completion_tokens=500
     )
     
     topics_text = response.choices[0].message.content.strip()
@@ -275,7 +274,7 @@ def extract_topics(text: str, max_topics: int = 5) -> List[str]:
 
 
 def score_importance(text: str, context: str = "") -> float:
-    """Auto-score importance (0-1) based on content significance using gpt-4o-mini."""
+    """Auto-score importance (0-1) based on content significance using gpt-5-mini."""
     client = openai.OpenAI()
     
     prompt = f"""Rate the importance of this memory on a scale of 0.0 to 1.0, where:
@@ -291,10 +290,9 @@ Memory: {text}
 Return ONLY a number between 0.0 and 1.0."""
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5-mini",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=10
+        max_completion_tokens=200
     )
     
     try:
@@ -305,7 +303,7 @@ Return ONLY a number between 0.0 and 1.0."""
 
 
 def summarize_memories(memories: List[Dict[str, Any]]) -> str:
-    """Compress multiple similar memories into one gist using gpt-4o-mini."""
+    """Compress multiple similar memories into one gist using gpt-5-mini."""
     if not memories:
         return ""
     
@@ -321,13 +319,12 @@ def summarize_memories(memories: List[Dict[str, Any]]) -> str:
     ])
     
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5-mini",
         messages=[
             {"role": "system", "content": "You are compressing multiple related memories into one coherent summary. Preserve key facts and context. Be concise but complete."},
             {"role": "user", "content": f"Summarize these {len(memories)} related memories:\n\n{memory_texts}"}
         ],
-        temperature=0.4,
-        max_tokens=300
+        max_completion_tokens=1500
     )
     
     return response.choices[0].message.content.strip()
