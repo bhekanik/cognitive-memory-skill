@@ -44,7 +44,7 @@ This skill implements cognitive science principles:
 ## Requirements
 
 - PostgreSQL 14+ with pgvector extension
-- OpenAI API key (for embeddings via `text-embedding-3-small`)
+- OpenAI API key (for embeddings via `text-embedding-3-small` and LLM features via `gpt-4o-mini`)
 - Node.js 18+ or Python 3.10+
 
 ## Setup
@@ -180,6 +180,8 @@ Scoring guide:
 - **1.0**: Critical (life events, core beliefs, major insights)
 
 Use `--auto-score` flag when storing to score importance automatically.
+
+**Model:** Uses `gpt-4o-mini` for all topic extraction, importance scoring, and summarization. Embeddings use `text-embedding-3-small`.
 
 ### Summarize Multiple Memories
 
